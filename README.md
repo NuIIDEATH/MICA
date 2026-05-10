@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/language-JavaScript-orange.svg" alt="Language">
 </p>
 
-https://github.com/user-attachments/assets/00000000-0000-0000-0000-000000000000
+<video src="doc/mica.mp4" controls></video>
 
 ---
 
@@ -60,21 +60,21 @@ That's it. No `npm install`, no server, no build step.
 
 ## 📸 Screenshots
 
-| Dark Theme | Light Theme |
-|------------|-------------|
+| Dark Theme            | Light Theme             |
+| --------------------- | ----------------------- |
 | ![Dark](doc/dark.jpg) | ![Light](doc/light.jpg) |
 
 > 🎬 **[Watch Demo Video](doc/mica.mp4)** — drag-and-drop workflow, auto-grouping, bus connections, and export.
 
 ## 🏗️ Architecture
 
-| Component | Description |
-|-----------|-------------|
-| `VerilogParser` | Parses Verilog/SV files, extracts module definitions, ports, parameters |
-| `PortGrouper` | Protocol-aware + heuristic port grouping via label propagation & Louvain |
-| `GridRouter` | WebCola-powered edge routing with obstacle avoidance |
-| `Instance` | Canvas object: port groups, connections, position, wrapper hierarchy |
-| `Connection` | Wire between two ports, supports waypoints and bus aggregation |
+| Component       | Description                                                              |
+| --------------- | ------------------------------------------------------------------------ |
+| `VerilogParser` | Parses Verilog/SV files, extracts module definitions, ports, parameters  |
+| `PortGrouper`   | Protocol-aware + heuristic port grouping via label propagation & Louvain |
+| `GridRouter`    | WebCola-powered edge routing with obstacle avoidance                     |
+| `Instance`      | Canvas object: port groups, connections, position, wrapper hierarchy     |
+| `Connection`    | Wire between two ports, supports waypoints and bus aggregation           |
 
 ## 🧪 Supported Constructs
 
@@ -86,12 +86,12 @@ That's it. No `npm install`, no server, no build step.
 
 ## 📦 Third-Party
 
-| Library | License | Purpose |
-|---------|---------|---------|
-| [Prism.js](https://prismjs.com/) | MIT | RTL syntax highlighting |
-| [prism-themes](https://github.com/PrismJS/prism-themes) | MIT | One Dark / One Light themes |
-| [webcola](https://github.com/tgdwyer/WebCola) | MIT | Graph layout engine |
-| [fflate](https://github.com/101arrowz/fflate) | MIT | ZIP export compression |
+| Library                                                 | License | Purpose                     |
+| ------------------------------------------------------- | ------- | --------------------------- |
+| [Prism.js](https://prismjs.com/)                        | MIT     | RTL syntax highlighting     |
+| [prism-themes](https://github.com/PrismJS/prism-themes) | MIT     | One Dark / One Light themes |
+| [webcola](https://github.com/tgdwyer/WebCola)           | MIT     | Graph layout engine         |
+| [fflate](https://github.com/101arrowz/fflate)           | MIT     | ZIP export compression      |
 
 ## 📄 License
 
