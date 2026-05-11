@@ -186,7 +186,12 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:system-ui,-apple-sy
 .instance .inst-header .inst-del:hover{background:rgba(224,108,117,.2)}
 @keyframes port-flash{0%,100%{background:rgba(97,175,239,.35);border-radius:2px;box-shadow:0 0 6px rgba(97,175,239,.5)}50%{background:transparent;box-shadow:none}}
 .port-flash{animation:port-flash 1s ease-in-out infinite}
-.instance .inst-params{padding:4px 10px;font-size:10px;color:var(--accent2);border-bottom:1px solid var(--border);background:var(--bg1);max-height:80px;overflow-y:auto}
+.instance .inst-params{padding:4px 10px;font-size:10px;color:var(--accent2);border-bottom:1px solid var(--border);background:var(--bg1);max-height:80px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.instance .inst-params::-webkit-scrollbar{width:6px;height:6px}
+.instance .inst-params::-webkit-scrollbar-track{background:transparent}
+.instance .inst-params::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.instance .inst-params::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+.instance .inst-params::-webkit-scrollbar-corner{background:transparent}
 .instance .inst-params .param-line{white-space:nowrap;line-height:1.6}
 .instance .inst-params span{margin-right:6px;white-space:nowrap}
 .instance .inst-ports{padding:2px 0}
@@ -2360,9 +2365,12 @@ class VerilogParser{
         const pm={};for(const p of ports)pm[p.name]=p;
         for(const bp of bodyPorts){
           if(pm[bp.name])Object.assign(pm[bp.name],bp);
+          else ports.push(bp);
         }
       }
-      this.modules[key]={name:modName,filename,params,ports,key,
+      // Extract source-format groups (blank lines/comments between port declarations)
+      const sourceGroups=this._buildSourceGroups(portStr,bodyStr,ports);
+      this.modules[key]={name:modName,filename,params,ports,key,sourceGroups,
         source:content.substring(m.index,endMod+9),srcPos:m.index};
       // If overwriting, migrate all instances using this module
       if(isOverwrite&&typeof instances!=='undefined'&&instances){
@@ -2489,43 +2497,41 @@ class VerilogParser{
     parts.push(str.substring(start));return parts.map(s=>s.trim()).filter(Boolean);
   }
   _parsePortsANSI(headerStr,params){
-    const ports=[];
+    const ports=[];let lastIdx=0;
     if(!headerStr||!headerStr.trim())return ports;
     const parts=this._splitComma(headerStr);
     for(const part of parts){
       const p=part.trim();if(!p)continue;
+      const srcIdx=headerStr.indexOf(p,lastIdx);if(srcIdx>=0)lastIdx=srcIdx+p.length;
       // interface ports: InterfaceType.modport instance_name or .name(if)
       const ifM=p.match(/^(\w+)\.(\w+)\s+(\w+)$/);
       if(ifM){
-        ports.push({name:ifM[3],direction:'interface',width:'',dimensions:[],isClk:false,isRst:false,ifType:ifM[1],ifModport:ifM[2]});
+        ports.push({name:ifM[3],direction:'interface',width:'',dimensions:[],isClk:false,isRst:false,ifType:ifM[1],ifModport:ifM[2],_srcIdx:srcIdx>=0?srcIdx:0});
         continue;
       }
       if(p.startsWith('.')||/^interface\s/.test(p)){
         const nm=p.match(/\.(\w+)\s*\(/);
         const name=nm?nm[1]:p.replace(/^interface\s+/,'').trim();
-        ports.push({name,direction:'interface',width:'',dimensions:[],isClk:false,isRst:false});
+        ports.push({name,direction:'interface',width:'',dimensions:[],isClk:false,isRst:false,_srcIdx:srcIdx>=0?srcIdx:0});
         continue;
       }
       // ANSI: direction [type keywords...] [signed] [width...] name [dims...]
       const m=p.match(/^(input|output|inout|ref)\s+((?:\w+(?:::\w+)?\s+)*)(?:signed\s+)?((?:\[[^\]]+\]\s*)*)(\w+)\s*(.*)$/);
       if(m){
         const dir=m[1],rawType=m[2].trim(),brackets=m[3],name=m[4],rest=m[5]||'';
-        // Filter out common wire/reg/logic keywords
         const typeKW=/^(wire|reg|logic|tri|wand|wor|supply0|supply1)$/i.test(rawType)?'':rawType;
-        // All brackets before name → width (packed dimensions join)
         const bre=/\[([^\]]+)\]/g;
         const allB=[];let bm;
         while((bm=bre.exec(brackets))!==null)allB.push(bm[1]);
         const width=allB.length>0?allB.map(b=>'['+b+']').join(''):'';
         const dims=[];
-        // Parse dimensions after name
         const dre=/\[([^\]]+)\]/g;let dm;
         while((dm=dre.exec(rest))!==null)dims.push(dm[1]);
-        ports.push({name,direction:dir,width,dimensions:dims,type:typeKW||'',isClk:false,isRst:false});
+        ports.push({name,direction:dir,width,dimensions:dims,type:typeKW||'',isClk:false,isRst:false,_srcIdx:srcIdx>=0?srcIdx:0});
         continue;
       }
       const nm2=p.match(/^(\w+)/);
-      if(nm2)ports.push({name:nm2[1],direction:'inout',width:'',dimensions:[],isClk:false,isRst:false});
+      if(nm2)ports.push({name:nm2[1],direction:'inout',width:'',dimensions:[],isClk:false,isRst:false,_srcIdx:srcIdx>=0?srcIdx:0});
     }
     return ports;
   }
@@ -2534,6 +2540,7 @@ class VerilogParser{
     const re=/(input|output|inout)\s+((?:\w+(?:::\w+)?\s+)*)(?:signed\s+)?((?:\[[^\]]+\]\s*)*)(\w+)\s*((?:\[[^\]]+\]\s*)*)/g;
     let m;
     while((m=re.exec(bodyStr))!==null){
+      const srcIdx=m.index;
       const dir=m[1],rawType=m[2].trim(),brackets=m[3],name=m[4],rest=m[5]||'';
       const typeKW=/^(wire|reg|logic|tri|wand|wor|supply0|supply1)$/i.test(rawType)?'':rawType;
       const bre=/\[([^\]]+)\]/g;
@@ -2542,12 +2549,46 @@ class VerilogParser{
       const width=allB.length>0?allB.map(b=>'['+b+']').join(''):'';
       const dims=[];const dre=/\[([^\]]+)\]/g;let dm;
       while((dm=dre.exec(rest))!==null)dims.push(dm[1]);
-      ports.push({name,direction:dir,width,dimensions:dims,type:typeKW,isClk:false,isRst:false});
+      ports.push({name,direction:dir,width,dimensions:dims,type:typeKW,isClk:false,isRst:false,_srcIdx:srcIdx});
     }
     return ports;
   }
   getModules(){return Object.values(this.modules)}
   getModule(key){return this.modules[key]}
+  _buildSourceGroups(portStr,bodyStr,ports){
+    // Sort ports by source position. Build groups based on blank lines / comments
+    // between consecutive port declarations in the source.
+    const sorted=[...ports].filter(p=>p._srcIdx!=null).sort((a,b)=>(a._srcIdx||0)-(b._srcIdx||0));
+    if(sorted.length<2)return [];
+    // Collect all port declarations with positions from both ANSI header and body
+    const combined=bodyStr?portStr+'\n'+bodyStr:portStr;
+    const groups=[];let cur=[sorted[0].name];
+    for(let i=1;i<sorted.length;i++){
+      const prev=sorted[i-1],curr=sorted[i];
+      const gapStart=prev._srcIdx, gapEnd=curr._srcIdx;
+      // Extract text between the two port declarations
+      let gap='';
+      if(bodyStr&&gapStart>=portStr.length){
+        // Both in body: gap is in bodyStr
+        gap=bodyStr.substring(gapStart-portStr.length-1, gapEnd-portStr.length-1);
+      }else if(bodyStr&&gapEnd>=portStr.length){
+        // Cross boundary: ANSI → body
+        gap=portStr.substring(gapStart)+'\n'+bodyStr.substring(0,gapEnd-portStr.length-1);
+      }else{
+        // Both in ANSI header
+        gap=portStr.substring(gapStart,gapEnd);
+      }
+      // Check for blank line or comment-only line between ports
+      const hasBoundary=/^\s*\/\/|^\s*\/\*|^\s*$|^\s*\n\s*\n/gm.test(gap);
+      if(hasBoundary){
+        groups.push(cur);cur=[curr.name];
+      }else{
+        cur.push(curr.name);
+      }
+    }
+    groups.push(cur);
+    return groups.filter(g=>g.length>=2);
+  }
 }
 // ====== grouper.js ======
 // ============================================================
@@ -2734,11 +2775,13 @@ class PortGrouper{
   _isClock(name){
     const l=name.toLowerCase();
     if(this._globals.clocks.has(l))return true;
-    return /(clk|clock|tck|rck)/i.test(l);}
+    if(/block|reclock|clocking/i.test(l))return false;
+    return /(clk|clock)/i.test(l);}
   _isReset(name){
     const l=name.toLowerCase();
     if(this._globals.resets.has(l))return true;
-    return /(rst|reset|por)/i.test(l);}
+    if(/burst|first|thirst|worst|interest|verset/i.test(l))return false;
+    return /(rst|reset)/i.test(l);}
 
   // Public API
   groupPorts(ports){ return this._groupPortsUnified(ports); }
@@ -2760,9 +2803,6 @@ class PortGrouper{
     // Phase 0: Tokenize + extract clocks/resets + classify tokens
     const nports=[], globalSignals=new Set();
     for(const p of ports){
-      const isClk=this._isClock(p.name), isRst=this._isReset(p.name);
-      if(isClk){result.clocks.push(p);continue;}
-      if(isRst){result.resets.push(p);continue;}
       const toks=_tokenize(p.name);
       // Detect global signals by checking against all protocol global fields
       for(const bare of [p.name.toLowerCase(), ...toks, toks.join('_')]){
@@ -2873,6 +2913,21 @@ class PortGrouper{
     }
 
     // Phase 2: Louvain instance splitting within each family
+    // Collect protocol global clk/rst + regex fallback for unassigned ports
+    const assignedNodes=new Set();
+    for(const[family,members]of Object.entries(famGroups))for(const nm of members)assignedNodes.add(nm);
+    for(const np of nports){
+      const nm=np.p.name;
+      if(np.global){
+        // Protocol global signal: always push to clocks/resets
+        if(this._isClock(nm))result.clocks.push(np.p);
+        else if(this._isReset(nm))result.resets.push(np.p);
+      }else if(!assignedNodes.has(nm)){
+        // Not assigned to any protocol: regex fallback
+        if(this._isClock(nm))result.clocks.push(np.p);
+        else if(this._isReset(nm))result.resets.push(np.p);
+      }
+    }
     for(const[family,members]of Object.entries(famGroups)){
       if(members.length<2)continue;
       const subNames=members.filter(n=>nports.some(np=>np.p.name===n&&!np.global));
@@ -2880,8 +2935,10 @@ class PortGrouper{
       // Louvain — filter to instance/index tokens for instance splitting
       const instNports=nports.map(np=>{
         const ft=np.toks.filter(t=>t.type==='instance'||t.type==='index');
-        if(ft.length===0)ft.push(np.toks[0]);
-        return {p:np.p, toks:ft, global:np.global};
+        const hasReal=ft.length>0;
+        if(!hasReal)ft.push(np.toks[0]);
+        return {p:np.p, toks:ft, global:np.global, _hasRealInst:hasReal};
+
       });
       const part=this._louvain(subNames,instNports);
       // Group by community
@@ -2890,14 +2947,15 @@ class PortGrouper{
         if(!insts[com])insts[com]=[];
         insts[com].push(nm);
       }
-      // If Louvain produced only singletons, treat all as one group
-      const allSgl=Object.values(insts).every(v=>v.length<=1);
+      // If no port has real instance/index tokens, don't split — keep as one
+      const noRealInst=instNports.every(np=>!np._hasRealInst);
+      const allSgl=noRealInst||Object.values(insts).every(v=>v.length<=1);
       if(allSgl&&subNames.length>=2) insts[0]=subNames;
       for(const[com,portNames]of Object.entries(insts)){
         if(portNames.length<2)continue;
         // Phase 3: Version annotation
         const vers=Object.entries(this.protocols).filter(([_,p])=>p.family===family);
-        let bestVer='',bestScore=-1,bestRole=null;
+        let bestVer='',bestScore=-1,bestOptScore=-1,bestRole=null;
         for(const[vn,vp]of vers){
           const instSigSet=new Set();
           for(const pn of portNames){
@@ -2913,7 +2971,16 @@ class PortGrouper{
             total++;
           }
           const score=total>0?covered/total:0;
-          if(score>bestScore){bestScore=score;bestVer=vn;bestRole=this._inferRole(portNames,nports,vp);}
+          // Tie-break: prefer version with more optional signals matched
+          let optCovered=0,optTotal=0;
+          for(const s of(vp.optional||[])){
+            const stoks=new Set(_tokenize(s));
+            if([...stoks].every(t=>instSigSet.has(t)))optCovered++;
+            optTotal++;
+          }
+          const optScore=optTotal>0?optCovered/optTotal:0;
+          if(score>bestScore||(score===bestScore&&optScore>bestOptScore)){
+            bestScore=score;bestOptScore=optScore;bestVer=vn;bestRole=this._inferRole(portNames,nports,vp);}
         }
         // Reject if coverage < 40% or fewer than 3 required signals matched
         const bp=this.protocols[bestVer];
@@ -3028,8 +3095,10 @@ class PortGrouper{
     for(const np of nports)if(!assignSet.has(np.p.name)&&!np.global)leftover.push(np);
     // Cluster leftover ports
     if(leftover.length>=2) this._doHeuristicOnly(leftover.filter(np=>np), result, assignSet);
-    // Global signals
-    const gsig=nports.filter(np=>np.global&&!assignSet.has(np.p.name));
+    // Global signals (not already in clocks/resets)
+    const clockNames=new Set(result.clocks.map(p=>p.name));
+    const resetNames=new Set(result.resets.map(p=>p.name));
+    const gsig=nports.filter(np=>np.global&&!assignSet.has(np.p.name)&&!clockNames.has(np.p.name)&&!resetNames.has(np.p.name));
     if(gsig.length>=2){
       const gnames=gsig.map(np=>np.p.name);
       result.groups.push({name:'CLK_RST',role:null,protocol:null,portNames:gnames});
@@ -3163,7 +3232,9 @@ class PortGrouper{
         // Pair bonus: known signal pairs get +0.3
         const lj=nj.toks[nj.toks.length-1]?.tok;
         const pairBonus=_hasPair(ni.toks,nj.toks)?0.4:0;
-        sim[i][j]=sim[j][i]=Math.min(1, 0.8*dice+0.2*tokJac+pairBonus);
+        // Source-format bonus: ports declared together in source get +0.2
+        const srcBonus=(ni.p._srcGroupId!=null&&ni.p._srcGroupId===nj.p._srcGroupId)?0.2:0;
+        sim[i][j]=sim[j][i]=Math.min(1, 0.8*dice+0.2*tokJac+pairBonus+srcBonus);
       }
     }
     // Pattern cluster bonus: detect repeated structures differentiated by
@@ -3637,6 +3708,15 @@ class Instance{
     this.params={};
     for(const p of modDef.params)this.params[p.name]=p.default||p.value||'';
     this.ports=modDef.ports.map(p=>({...p,isClk:grouper._isClock(p.name),isRst:grouper._isReset(p.name)}));
+    // Assign source-format group IDs
+    if(modDef.sourceGroups&&modDef.sourceGroups.length>0){
+      for(let gi=0;gi<modDef.sourceGroups.length;gi++){
+        for(const nm of modDef.sourceGroups[gi]){
+          const p=this.ports.find(x=>x.name===nm);
+          if(p)p._srcGroupId=gi;
+        }
+      }
+    }
     // For interface modules, add modports as interface ports
     if(modDef.isInterface&&modDef.modports){
       for(const [mpName,sigs] of Object.entries(modDef.modports)){
@@ -3645,7 +3725,7 @@ class Instance{
     }
     this.portGroups=[]; this.clocks=this.ports.filter(p=>p.isClk).map(p=>p.name);
     this.resets=this.ports.filter(p=>p.isRst).map(p=>p.name);
-    this.ungroupedPorts=this.ports.map(p=>p.name); this.x=x||100;this.y=y||100; this._ties={};
+    this.ungroupedPorts=this.ports.map(p=>p.name); this.x=x||100;this.y=y||100; this._ties={}; this._clkCollapsed=false; this._rstCollapsed=false;
     const LINE_HUES=[25,35,45,55,30,40,50,28,38,48,58,32,42,52,36,46,56];
     this.hue=LINE_HUES[instHueCounter%LINE_HUES.length];
     instHueCounter++;
@@ -3660,6 +3740,20 @@ class Instance{
     this.portGroups=g.groups.map(x=>({name:x.name,role:x.role,protocol:x.protocol,portNames:x.portNames})).filter(g=>g.portNames.length>=2);
     this.clocks=g.clocks.map(p=>p.name); this.resets=g.resets.map(p=>p.name);
     this.ungroupedPorts=g.ungrouped.map(p=>p.name);
+    this._subGroupClkRst();
+  }
+  _subGroupClkRst(){
+    this.clockGroups=null; this.resetGroups=null;
+    if(this.clocks.length>7){
+      const clkPorts=this.clocks.map(n=>this.getPort(n)).filter(Boolean);
+      const grps=grouper.heuristicGroup(clkPorts,[],[],[]);
+      if(grps.length>0)this.clockGroups=grps.filter(g=>g.portNames.length>=2);
+    }
+    if(this.resets.length>7){
+      const rstPorts=this.resets.map(n=>this.getPort(n)).filter(Boolean);
+      const grps=grouper.heuristicGroup(rstPorts,[],[],[]);
+      if(grps.length>0)this.resetGroups=grps.filter(g=>g.portNames.length>=2);
+    }
   }
   autoGroupProtocols(){
     // If another instance of same module already has groups, copy them
@@ -3668,7 +3762,10 @@ class Instance{
       if(peer){
         this.portGroups=JSON.parse(JSON.stringify(peer.portGroups)).filter(g=>g.portNames.length>=2||g._userCreated);
         this.clocks=[...peer.clocks];this.resets=[...peer.resets];
-        this.ungroupedPorts=[...peer.ungroupedPorts];return;
+        this.ungroupedPorts=[...peer.ungroupedPorts];
+        this.clockGroups=peer.clockGroups?JSON.parse(JSON.stringify(peer.clockGroups)):null;
+        this.resetGroups=peer.resetGroups?JSON.parse(JSON.stringify(peer.resetGroups)):null;
+        return;
       }
     }
     // Exclude interface ports from grouping
@@ -3679,6 +3776,7 @@ class Instance{
     this.ungroupedPorts=g.ungrouped.map(p=>p.name);
     // Also add interface ports to ungrouped
     for(const p of this.ports)if(p.direction==='interface')this.ungroupedPorts.push(p.name);
+    this._subGroupClkRst();
   }
   applyHeuristicGroups(){
     const nonIfPorts=this.ports.filter(p=>p.direction!=='interface');
@@ -3705,8 +3803,38 @@ class Instance{
   getDisplayPorts(){
     const r=[];const a=new Set();
     const add=(p,sec,gn=null)=>{if(!a.has(p.name)){r.push({...p,section:sec,groupName:gn});a.add(p.name);}};
-    for(const c of this.clocks){const p=this.getPort(c);if(p)add(p,'clk');}
-    for(const c of this.resets){const p=this.getPort(c);if(p)add(p,'rst');}
+    for(const c of this.clocks){
+      const p=this.getPort(c);if(!p)continue;
+      if(this.clockGroups&&this.clockGroups.some(g=>g.portNames.includes(c))){
+        // Will be added via clockGroups below — skip
+      }else{
+        add(p,'clk');
+      }
+    }
+    // Clock sub-groups
+    if(this.clockGroups){
+      for(const g of this.clockGroups){
+        for(const n of g.portNames){
+          const p=this.getPort(n);if(p)add(p,'clk_grp',g.name);
+        }
+      }
+    }
+    for(const c of this.resets){
+      const p=this.getPort(c);if(!p)continue;
+      if(this.resetGroups&&this.resetGroups.some(g=>g.portNames.includes(c))){
+        // Will be added via resetGroups below — skip
+      }else{
+        add(p,'rst');
+      }
+    }
+    // Reset sub-groups
+    if(this.resetGroups){
+      for(const g of this.resetGroups){
+        for(const n of g.portNames){
+          const p=this.getPort(n);if(p)add(p,'rst_grp',g.name);
+        }
+      }
+    }
     for(const g of this.portGroups){
       if(g.portNames.length<2)continue;
       // Dedup portNames (defensive)
@@ -4746,7 +4874,7 @@ function createInstanceDOM(inst){
   renderInstanceDOM(div,inst);
   instancesLayer.appendChild(div);
   div.addEventListener('mousedown',e=>{
-    if(e.target.closest('.port-dot')||e.target.closest('.group-header')||e.target.closest('.inst-del'))return;
+    if(e.target.closest('.port-dot')||e.target.closest('.group-header')||e.target.closest('.inst-del')||e.target.closest('.inst-params'))return;
     e.stopPropagation();selectInstance(inst.id,e.ctrlKey||e.metaKey);startInstDrag(inst,e);
   });
   return div;
@@ -4779,10 +4907,35 @@ function renderPortSections(inst,dp,conn){
   let h='';let prevSec='';
   for(const p of dp){
     const sec=p.section; let dividerKey=sec;
-    if(sec==='group'&&p.groupName)dividerKey='group_'+p.groupName;
-    if(dividerKey!==prevSec){
-      if(sec==='clk')h+=`<div class="port-section-divider">⏱ Clock / Reset</div>`;
-      else if(sec==='group'&&p.groupName){
+      if(sec==='clk'||sec==='clk_grp')dividerKey=sec+'|'+(sec==='clk_grp'?p.groupName:'');
+      else if(sec==='rst'||sec==='rst_grp')dividerKey=sec+'|'+(sec==='rst_grp'?p.groupName:'');
+      else if(sec==='group'&&p.groupName)dividerKey='group_'+p.groupName;
+      if(dividerKey!==prevSec){
+        if(sec==='clk'){
+          const collapsed=inst._clkCollapsed;
+          h+=`<div class="port-section-divider group-header" data-section="clk">
+            <span class="collapse-icon ${collapsed?'collapsed':''}" style="color:${collapsed?'#555':'var(--success)'}">${collapsed?'▶':'▼'}</span>
+            ⏱ Clock
+            <span style="margin-left:auto;font-size:12px;color:var(--danger);cursor:pointer;padding:2px 8px" title="Clear all clock connections" onclick="event.stopPropagation();selectInstance('${inst.id}');clearSectionConns('${inst.id}','clk')">⛓️‍💥</span></div>`;
+        }else if(sec==='clk_grp'&&p.groupName){
+          const g=inst.clockGroups?.find(x=>x.name===p.groupName);
+          const collapsed=g?._collapsed;
+          h+=`<div class="port-section-divider group-header" data-clk-group="${escHtml(p.groupName)}" style="padding-left:16px">
+            <span class="collapse-icon ${collapsed?'collapsed':''}" style="color:${collapsed?'#555':'var(--success)'}">${collapsed?'▶':'▼'}</span>
+            ⏱ ${escHtml(p.groupName)}</div>`;
+        }else if(sec==='rst'){
+          const collapsed=inst._rstCollapsed;
+          h+=`<div class="port-section-divider group-header" data-section="rst">
+            <span class="collapse-icon ${collapsed?'collapsed':''}" style="color:${collapsed?'#555':'var(--success)'}">${collapsed?'▶':'▼'}</span>
+            🔄 Reset
+            <span style="margin-left:auto;font-size:12px;color:var(--danger);cursor:pointer;padding:2px 8px" title="Clear all reset connections" onclick="event.stopPropagation();selectInstance('${inst.id}');clearSectionConns('${inst.id}','rst')">⛓️‍💥</span></div>`;
+        }else if(sec==='rst_grp'&&p.groupName){
+          const g=inst.resetGroups?.find(x=>x.name===p.groupName);
+          const collapsed=g?._collapsed;
+          h+=`<div class="port-section-divider group-header" data-rst-group="${escHtml(p.groupName)}" style="padding-left:16px">
+            <span class="collapse-icon ${collapsed?'collapsed':''}" style="color:${collapsed?'#555':'var(--success)'}">${collapsed?'▶':'▼'}</span>
+            🔄 ${escHtml(p.groupName)}</div>`;
+      }else if(sec==='group'&&p.groupName){
         const g=inst.portGroups.find(x=>x.name===p.groupName);
         const tag=g?.role?`<span class="sec-tag ${g.role}">${g.role==='master'?'M':'S'}</span>`:'';
         const collapsed=g?._collapsed;
@@ -4797,7 +4950,15 @@ function renderPortSections(inst,dp,conn){
       prevSec=dividerKey;
     }
     let collapsedClass='';
-    if(sec==='group'&&p.groupName){
+    if(sec==='clk'&&inst._clkCollapsed)collapsedClass='collapsed';
+    else if(sec==='clk_grp'&&p.groupName){
+      const g=inst.clockGroups?.find(x=>x.name===p.groupName);
+      if(g?._collapsed)collapsedClass='collapsed';
+    }else if(sec==='rst'&&inst._rstCollapsed)collapsedClass='collapsed';
+    else if(sec==='rst_grp'&&p.groupName){
+      const g=inst.resetGroups?.find(x=>x.name===p.groupName);
+      if(g?._collapsed)collapsedClass='collapsed';
+    }else if(sec==='group'&&p.groupName){
       const g=inst.portGroups.find(x=>x.name===p.groupName);
       if(g?._collapsed)collapsedClass='collapsed';
     }
@@ -4819,7 +4980,7 @@ function bindInstanceEvents(div,inst){
   const db=div.querySelector('[data-action=delete]');
   if(db)db.addEventListener('click',e=>{e.stopPropagation();deleteInstance(inst.id);});
   const paramsEl=div.querySelector('.inst-params');
-  if(paramsEl){paramsEl.addEventListener('wheel',e=>{e.stopPropagation();paramsEl.scrollTop+=e.deltaY;});}
+  if(paramsEl){paramsEl.addEventListener('wheel',e=>{e.stopPropagation();if(e.shiftKey)paramsEl.scrollLeft+=e.deltaY;else paramsEl.scrollTop+=e.deltaY;});}
   div.querySelectorAll('.port-dot,.port-name').forEach(el=>{
     const slot=el.closest('.port-slot');if(!slot)return;
     const dot=slot.querySelector('.port-dot[data-port]');if(!dot)return;
@@ -4827,14 +4988,33 @@ function bindInstanceEvents(div,inst){
   });
   div.querySelectorAll('.group-header').forEach(hdr=>{
     hdr.addEventListener('mousedown',e=>{
-      e.stopPropagation();e.preventDefault();
       const gn=hdr.dataset.group;
+      if(!gn)return; // clk/rst section headers: no bus drag
+      e.stopPropagation();e.preventDefault();
       const g=inst.portGroups.find(x=>x.name===gn);
-      if(g&&g._collapsed&&g.portNames.length>0){g._collapsed=false;renderAllInstances();} // auto-expand
+      if(g&&g._collapsed&&g.portNames.length>0){g._collapsed=false;renderAllInstances();}
       startBusDrag(inst.id,gn,e);
     });
     hdr.addEventListener('click',e=>{
       const gn=hdr.dataset.group;
+      const cgn=hdr.dataset.clkGroup;
+      const rgn=hdr.dataset.rstGroup;
+      const sec=hdr.dataset.section;
+      if(sec){ // clk/rst section: toggle collapse
+        if(sec==='clk'){inst._clkCollapsed=!inst._clkCollapsed;renderAllInstances();updateProps();}
+        else if(sec==='rst'){inst._rstCollapsed=!inst._rstCollapsed;renderAllInstances();updateProps();}
+        return;
+      }
+      if(cgn){ // clock sub-group: toggle collapse
+        const g=inst.clockGroups?.find(x=>x.name===cgn);
+        if(g){g._collapsed=!g._collapsed;renderAllInstances();updateProps();}
+        return;
+      }
+      if(rgn){ // reset sub-group: toggle collapse
+        const g=inst.resetGroups?.find(x=>x.name===rgn);
+        if(g){g._collapsed=!g._collapsed;renderAllInstances();updateProps();}
+        return;
+      }
       if(e.shiftKey){
         if(window._pendingBus&&window._pendingBus.instId!==inst.id){
           autoConnectGroup(window._pendingBus.instId,window._pendingBus.groupName,inst.id,gn,true);
@@ -5689,11 +5869,24 @@ function updateProps(){
       <select style="width:72px;font-size:10px;padding:0;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:3px" onclick="event.stopPropagation()" onchange="addToClock(this.value);this.value=''" title="Add clock"><option value="">+</option>${allUngrouped.map(p=>`<option value="${escHtml(p.name)}">${escHtml(p.name)}</option>`).join('')}</select>
     </div>
     <div class="group-body">`;
-  if(inst.clocks.length===0)h+=`<div class="group-port" style="color:#666"><i>none</i></div>`;
+  if(inst.clocks.length===0&&(!inst.clockGroups||inst.clockGroups.length===0))h+=`<div class="group-port" style="color:#666"><i>none</i></div>`;
+  // Ungrouped clocks
   for(const cn of inst.clocks){
+    if(inst.clockGroups&&inst.clockGroups.some(g=>g.portNames.includes(cn)))continue;
     const cp=inst.ports.find(p=>p.name===cn);const cCon=inst.getConnectedPorts().has(cn);const cGrp=inst.portGroups.find(g=>g.portNames.includes(cn));
     h+=`<div class="group-port" style="display:flex;align-items:center;gap:4px"><span class="gp-dot" style="background:var(--port-${cp?.direction==='output'?'out':'in'});${cCon?'box-shadow:0 0 0 2px var(--success)':''}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(cn)}${cGrp?`<br><span style="color:#666;font-size:9px">${getProtoIcon(cGrp)[0]} ${escHtml(cGrp.name)}</span>`:''}${(()=>{const p=inst.getPort(cn);if(!p)return'';return '<span style="font-size:9px;color:var(--accent2)">'+((p.dimensions||[]).map(d=>'['+escHtml(d)+']').join(''))+'</span>';})()}${_tieIcon(inst,cp)}</span>${(()=>{const p=inst.getPort(cn);if(!p)return'';return '<span style="font-size:9px;color:#888;flex-shrink:0">'+(p.type?escHtml(p.type):'')+'</span><span style="font-size:9px;color:#666;flex-shrink:0;text-align:right">'+(p.width?escHtml(p.width):'')+'</span>';})()}
       <button style="margin-left:auto;font-size:9px;color:#888;background:none;border:none;cursor:pointer;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='#888'" onclick="rmFromClock('${escHtml(cn)}')">✕</button></div>`;
+  }
+  // Clock sub-groups
+  if(inst.clockGroups){
+    for(const cg of inst.clockGroups){
+      h+=`<div style="font-size:10px;color:var(--port-clk);font-weight:600;padding:2px 0 0 4px;border-top:1px solid var(--border);margin-top:2px">⏱ ${escHtml(cg.name)} <span style="color:#666;font-weight:400">(${cg.portNames.length})</span></div>`;
+      for(const cn of cg.portNames){
+        const cp=inst.ports.find(p=>p.name===cn);const cCon=inst.getConnectedPorts().has(cn);
+        h+=`<div class="group-port" style="display:flex;align-items:center;gap:4px"><span class="gp-dot" style="background:var(--port-${cp?.direction==='output'?'out':'in'});${cCon?'box-shadow:0 0 0 2px var(--success)':''}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(cn)}${(()=>{const p=inst.getPort(cn);if(!p)return'';return '<span style="font-size:9px;color:var(--accent2)">'+((p.dimensions||[]).map(d=>'['+escHtml(d)+']').join(''))+'</span>';})()}</span>${(()=>{const p=inst.getPort(cn);if(!p)return'';return '<span style="font-size:9px;color:#888;flex-shrink:0">'+(p.type?escHtml(p.type):'')+'</span><span style="font-size:9px;color:#666;flex-shrink:0;text-align:right">'+(p.width?escHtml(p.width):'')+'</span>';})()}
+          <button style="margin-left:auto;font-size:9px;color:#888;background:none;border:none;cursor:pointer;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='#888'" onclick="rmFromClock('${escHtml(cn)}')">✕</button></div>`;
+      }
+    }
   }
   h+=`</div></div>`;
   // Resets card
@@ -5703,11 +5896,24 @@ function updateProps(){
       <select style="width:72px;font-size:10px;padding:0;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:3px" onclick="event.stopPropagation()" onchange="addToReset(this.value);this.value=''" title="Add reset"><option value="">+</option>${allUngrouped.map(p=>`<option value="${escHtml(p.name)}">${escHtml(p.name)}</option>`).join('')}</select>
     </div>
     <div class="group-body">`;
-  if(inst.resets.length===0)h+=`<div class="group-port" style="color:#666"><i>none</i></div>`;
+  if(inst.resets.length===0&&(!inst.resetGroups||inst.resetGroups.length===0))h+=`<div class="group-port" style="color:#666"><i>none</i></div>`;
+  // Ungrouped resets
   for(const rn of inst.resets){
+    if(inst.resetGroups&&inst.resetGroups.some(g=>g.portNames.includes(rn)))continue;
     const rp=inst.ports.find(p=>p.name===rn);const rCon=inst.getConnectedPorts().has(rn);const rGrp=inst.portGroups.find(g=>g.portNames.includes(rn));
     h+=`<div class="group-port" style="display:flex;align-items:center;gap:4px"><span class="gp-dot" style="background:var(--port-${rp?.direction==='output'?'out':'in'});${rCon?'box-shadow:0 0 0 2px var(--success)':''}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(rn)}${rGrp?`<br><span style="color:#666;font-size:9px">${getProtoIcon(rGrp)[0]} ${escHtml(rGrp.name)}</span>`:''}${(()=>{const p=inst.getPort(rn);if(!p)return'';return '<span style="font-size:9px;color:var(--accent2)">'+((p.dimensions||[]).map(d=>'['+escHtml(d)+']').join(''))+'</span>';})()}${_tieIcon(inst,rp)}</span>${(()=>{const p=inst.getPort(rn);if(!p)return'';return '<span style="font-size:9px;color:#888;flex-shrink:0">'+(p.type?escHtml(p.type):'')+'</span><span style="font-size:9px;color:#666;flex-shrink:0;text-align:right">'+(p.width?escHtml(p.width):'')+'</span>';})()}
-      <button style="margin-left:auto;font-size:9px;color:#888;background:none;border:none;cursor:pointer" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='#888'" onclick="rmFromReset('${escHtml(rn)}')">✕</button></div>`;
+      <button style="margin-left:auto;font-size:9px;color:#888;background:none;border:none;cursor:pointer;flex-shrink:0" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='#888'" onclick="rmFromReset('${escHtml(rn)}')">✕</button></div>`;
+  }
+  // Reset sub-groups
+  if(inst.resetGroups){
+    for(const rg of inst.resetGroups){
+      h+=`<div style="font-size:10px;color:var(--port-rst);font-weight:600;padding:2px 0 0 4px;border-top:1px solid var(--border);margin-top:2px">🔄 ${escHtml(rg.name)} <span style="color:#666;font-weight:400">(${rg.portNames.length})</span></div>`;
+      for(const rn of rg.portNames){
+        const rp=inst.ports.find(p=>p.name===rn);const rCon=inst.getConnectedPorts().has(rn);
+        h+=`<div class="group-port" style="display:flex;align-items:center;gap:4px"><span class="gp-dot" style="background:var(--port-${rp?.direction==='output'?'out':'in'});${rCon?'box-shadow:0 0 0 2px var(--success)':''}"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(rn)}${(()=>{const p=inst.getPort(rn);if(!p)return'';return '<span style="font-size:9px;color:var(--accent2)">'+((p.dimensions||[]).map(d=>'['+escHtml(d)+']').join(''))+'</span>';})()}</span>${(()=>{const p=inst.getPort(rn);if(!p)return'';return '<span style="font-size:9px;color:#888;flex-shrink:0">'+(p.type?escHtml(p.type):'')+'</span><span style="font-size:9px;color:#666;flex-shrink:0;text-align:right">'+(p.width?escHtml(p.width):'')+'</span>';})()}
+          <button style="margin-left:auto;font-size:9px;color:#888;background:none;border:none;cursor:pointer" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='#888'" onclick="rmFromReset('${escHtml(rn)}')">✕</button></div>`;
+      }
+    }
   }
   h+=`</div></div>`;
   // Port Groups - sort: expanded (visible) first, then collapsed
