@@ -2823,7 +2823,7 @@ class PortGrouper{
       // Known signal tokens that should not be classified as instance at position 0
       const sigLike=new Set(['addr','address','data','we','wr','rd','en','enable','clk','clock','rst','reset',
         'valid','ready','ack','req','last','strobe','be','id','size','len','prot','cache','lock',
-        'qos','region','user','resp','error','irq','int','mode','cfg','status','ctrl','flag',
+        'qos','region','user','resp','error',
         'in','out','oe','sel','cs','tx','rx','mosi','miso','sclk','ssn','scl','sda']);
       for(let i=0;i<toks.length;i++){
         const t=toks[i];
@@ -2915,22 +2915,21 @@ class PortGrouper{
     // Phase 2: Louvain instance splitting within each family
     // Collect protocol global clk/rst + regex fallback for unassigned ports
     const assignedNodes=new Set();
+    const clkRstSet=new Set();
     for(const[family,members]of Object.entries(famGroups))for(const nm of members)assignedNodes.add(nm);
     for(const np of nports){
       const nm=np.p.name;
       if(np.global){
-        // Protocol global signal: always push to clocks/resets
-        if(this._isClock(nm))result.clocks.push(np.p);
-        else if(this._isReset(nm))result.resets.push(np.p);
+        if(this._isClock(nm)){result.clocks.push(np.p);assignedNodes.add(nm);clkRstSet.add(nm);}
+        else if(this._isReset(nm)){result.resets.push(np.p);assignedNodes.add(nm);clkRstSet.add(nm);}
       }else if(!assignedNodes.has(nm)){
-        // Not assigned to any protocol: regex fallback
-        if(this._isClock(nm))result.clocks.push(np.p);
-        else if(this._isReset(nm))result.resets.push(np.p);
+        if(this._isClock(nm)){result.clocks.push(np.p);assignedNodes.add(nm);clkRstSet.add(nm);}
+        else if(this._isReset(nm)){result.resets.push(np.p);assignedNodes.add(nm);clkRstSet.add(nm);}
       }
     }
     for(const[family,members]of Object.entries(famGroups)){
       if(members.length<2)continue;
-      const subNames=members.filter(n=>nports.some(np=>np.p.name===n&&!np.global));
+      const subNames=members.filter(n=>nports.some(np=>np.p.name===n&&!np.global)&&!clkRstSet.has(n));
       if(subNames.length<2)continue;
       // Louvain — filter to instance/index tokens for instance splitting
       const instNports=nports.map(np=>{
@@ -3255,7 +3254,7 @@ class PortGrouper{
         const np=rest.find(x=>x.p.name===nm);
         if(np)for(const t of np.toks)if(t.type==='instance'||t.type==='index')vals.add(t.tok);
       }
-      if(vals.size>=2) repeatBonus.set(s, Math.min(0.25, 0.10+(vals.size-2)*0.05));
+      if(vals.size>=2) repeatBonus.set(s, Math.min(0.50, 0.10+(vals.size-2)*0.05));
     }
     if(repeatBonus.size>0){
       for(let i=0;i<n;i++){
@@ -3303,6 +3302,10 @@ class PortGrouper{
         }
       }
       if(bestSim<confTightThresh)break;
+      // Size bonus: peak at 7 ports, gently penalize too-large or too-small
+      const mergedSize=grps[bestI].size+grps[bestJ].size;
+      const sizeFactor=Math.max(0.5, 1-Math.abs(mergedSize-7)*0.015);
+      if(bestSim*sizeFactor<confTightThresh)break;
       for(const pj of grps[bestJ])grps[bestI].add(pj);
       grps.splice(bestJ,1);
     }
@@ -3320,6 +3323,9 @@ class PortGrouper{
           }
         }
         if(bestSim<confLooseThresh)break;
+        const lsMerged=loose[bestI].size+loose[bestJ].size;
+        const lsFactor=1-Math.abs(lsMerged-7)*0.015;
+        if(bestSim*lsFactor<confLooseThresh)break;
         for(const pj of loose[bestJ])loose[bestI].add(pj);
         loose.splice(bestJ,1);
       }
