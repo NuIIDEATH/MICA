@@ -392,7 +392,7 @@ code[class*=language-],pre[class*=language-]{background:#272b33;color:#aab1bf;te
 </div>
 <div id="main" style="height:calc(100% - 42px)">
   <div id="left-panel">
-    <div class="panel-header">📁 Files <button onclick="this.nextElementSibling.click()" style="font-size:10px;margin-left:6px;background:transparent;color:#8899aa;border:none;border-radius:3px;cursor:pointer;padding:2px 6px;font-weight:500" onmouseover="this.style.background='rgba(97,175,239,.12)'" onmouseout="this.style.background='transparent'">🧩 + RTL Files</button><input type="file" multiple accept=".v,.sv,.vh,.svh" style="display:none" onchange="loadFiles(this.files);this.value=''"></div>
+    <div class="panel-header">📁 Files <button onclick="this.nextElementSibling.click()" style="font-size:10px;margin-left:6px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:4px;cursor:pointer;padding:2px 8px;font-weight:500" onmouseover="this.style.background='rgba(97,175,239,.12)'" onmouseout="this.style.background='transparent'">🧩 + RTL Files</button><input type="file" multiple accept=".v,.sv,.vh,.svh" style="display:none" onchange="loadFiles(this.files);this.value=''"></div>
     <div id="file-list"></div>
     <div class="panel-header" style="border-top:1px solid var(--border)">💠 Modules <span style="font-size:10px;color:#666">(drag→instantiate)</span></div>
     <div style="position:relative;margin:4px 6px">
@@ -2931,6 +2931,26 @@ class PortGrouper{
       if(members.length<2)continue;
       const subNames=members.filter(n=>nports.some(np=>np.p.name===n&&!np.global)&&!clkRstSet.has(n));
       if(subNames.length<2)continue;
+      // Detect duplicate signals: if the same bare signal appears multiple times,
+      // pre-split by prefix (everything before the bare signal name) to seed Louvain
+      const prefixMap={}; // prefix → Set of port names
+      for(const nm of subNames){
+        const np=nports.find(x=>x.p.name===nm);
+        if(!np)continue;
+        // Build prefix by taking all tokens before the last signal-like token
+        const toks=np.toks;
+        let lastSig=-1;
+        for(let i=toks.length-1;i>=0;i--)if(toks[i].type==='signal'||toks[i].type==='channel'){lastSig=i;}
+        const pfx=toks.slice(0,lastSig>0?lastSig:0).map(t=>t.tok).join('_');
+        if(!prefixMap[pfx])prefixMap[pfx]=new Set();
+        prefixMap[pfx].add(nm);
+      }
+      const prefixes=Object.keys(prefixMap);
+      let insts;
+      if(prefixes.length>=2){
+        insts={};
+        for(const[pfx,names]of Object.entries(prefixMap))insts[pfx]=[...names];
+      }else{
       // Louvain — filter to instance/index tokens for instance splitting
       const instNports=nports.map(np=>{
         const ft=np.toks.filter(t=>t.type==='instance'||t.type==='index');
@@ -2941,7 +2961,7 @@ class PortGrouper{
       });
       const part=this._louvain(subNames,instNports);
       // Group by community
-      const insts={};
+      insts={};
       for(const[nm,com]of Object.entries(part)){
         if(!insts[com])insts[com]=[];
         insts[com].push(nm);
@@ -2950,6 +2970,7 @@ class PortGrouper{
       const noRealInst=instNports.every(np=>!np._hasRealInst);
       const allSgl=noRealInst||Object.values(insts).every(v=>v.length<=1);
       if(allSgl&&subNames.length>=2) insts[0]=subNames;
+      } // end else
       for(const[com,portNames]of Object.entries(insts)){
         if(portNames.length<2)continue;
         // Phase 3: Version annotation
@@ -3808,7 +3829,7 @@ class Instance{
   }
   getDisplayPorts(){
     const r=[];const a=new Set();
-    const add=(p,sec,gn=null)=>{if(!a.has(p.name)){r.push({...p,section:sec,groupName:gn});a.add(p.name);}};
+    const add=(p,sec,gn=null,gidx=null)=>{if(!a.has(p.name)){r.push({...p,section:sec,groupName:gn,_gidx:gidx});a.add(p.name);}};
     for(const c of this.clocks){
       const p=this.getPort(c);if(!p)continue;
       if(this.clockGroups&&this.clockGroups.some(g=>g.portNames.includes(c))){
@@ -3817,8 +3838,10 @@ class Instance{
         add(p,'clk');
       }
     }
-    // Clock sub-groups
-    if(this.clockGroups){
+    // Clock sub-groups — always show header if groups exist
+    if(this.clockGroups&&this.clockGroups.length>0){
+      const hasClkHeader=r.some(x=>x.section==='clk');
+      if(!hasClkHeader)r.push({section:'clk',groupName:null,name:''});
       for(const g of this.clockGroups){
         for(const n of g.portNames){
           const p=this.getPort(n);if(p)add(p,'clk_grp',g.name);
@@ -3833,8 +3856,10 @@ class Instance{
         add(p,'rst');
       }
     }
-    // Reset sub-groups
-    if(this.resetGroups){
+    // Reset sub-groups — always show header if groups exist
+    if(this.resetGroups&&this.resetGroups.length>0){
+      const hasRstHeader=r.some(x=>x.section==='rst');
+      if(!hasRstHeader)r.push({section:'rst',groupName:null,name:''});
       for(const g of this.resetGroups){
         for(const n of g.portNames){
           const p=this.getPort(n);if(p)add(p,'rst_grp',g.name);
@@ -3843,7 +3868,7 @@ class Instance{
     }
     for(const g of this.portGroups){
       if(g.portNames.length<2)continue;
-      // Dedup portNames (defensive)
+      const gidx=this.portGroups.indexOf(g);
       const uniq=[...new Set(g.portNames)];
       // Sort ports: protocol groups by signal order, heuristic groups alphabetically
       const sorted=g.protocol?[...uniq].sort((a,b)=>{
@@ -3852,7 +3877,7 @@ class Instance{
         const sa=grouper._bareSignalName(a,''),sb=grouper._bareSignalName(b,'');
         return order(sa)-order(sb)||a.localeCompare(b);
       }):[...uniq].sort((a,b)=>a.localeCompare(b));
-      for(const n of sorted){const p=this.getPort(n);if(p)add(p,'group',g.name);}
+      for(const n of sorted){const p=this.getPort(n);if(p)add(p,'group',g.name,gidx);}
     }
     for(const p of this.ports){
       if(!a.has(p.name)&&(p.direction==='inout'||p.direction==='interface'))add(p,'inout');
@@ -4912,6 +4937,24 @@ function _tieIcon(inst,p){
 function renderPortSections(inst,dp,conn){
   let h='';let prevSec='';
   for(const p of dp){
+    if(!p.name){
+      // Placeholder: render the section header but skip the port
+      const sec=p.section;
+      if(sec==='clk'){
+        const collapsed=inst._clkCollapsed;
+        h+=`<div class="port-section-divider group-header" data-section="clk">
+          <span class="collapse-icon ${collapsed?'collapsed':''}" style="color:${collapsed?'#555':'var(--success)'}">${collapsed?'▶':'▼'}</span>
+          ⏱ Clock
+          <span style="margin-left:auto;font-size:12px;color:var(--danger);cursor:pointer;padding:2px 8px" title="Clear all clock connections" onclick="event.stopPropagation();selectInstance('${inst.id}');clearSectionConns('${inst.id}','clk')">⛓️‍💥</span></div>`;
+      }else if(sec==='rst'){
+        const collapsed=inst._rstCollapsed;
+        h+=`<div class="port-section-divider group-header" data-section="rst">
+          <span class="collapse-icon ${collapsed?'collapsed':''}" style="color:${collapsed?'#555':'var(--success)'}">${collapsed?'▶':'▼'}</span>
+          🔄 Reset
+          <span style="margin-left:auto;font-size:12px;color:var(--danger);cursor:pointer;padding:2px 8px" title="Clear all reset connections" onclick="event.stopPropagation();selectInstance('${inst.id}');clearSectionConns('${inst.id}','rst')">⛓️‍💥</span></div>`;
+      }
+      prevSec=p.section;continue;
+    }
     const sec=p.section; let dividerKey=sec;
       if(sec==='clk'||sec==='clk_grp')dividerKey=sec+'|'+(sec==='clk_grp'?p.groupName:'');
       else if(sec==='rst'||sec==='rst_grp')dividerKey=sec+'|'+(sec==='rst_grp'?p.groupName:'');
@@ -4942,11 +4985,12 @@ function renderPortSections(inst,dp,conn){
             <span class="collapse-icon ${collapsed?'collapsed':''}" style="color:${collapsed?'#555':'var(--success)'}">${collapsed?'▶':'▼'}</span>
             🔄 ${escHtml(p.groupName)}</div>`;
       }else if(sec==='group'&&p.groupName){
-        const g=inst.portGroups.find(x=>x.name===p.groupName);
+        const g=p._gidx!=null?inst.portGroups[p._gidx]:inst.portGroups.find(x=>x.name===p.groupName);
         const tag=g?.role?`<span class="sec-tag ${g.role}">${g.role==='master'?'M':'S'}</span>`:'';
         const collapsed=g?._collapsed;
         const icon=collapsed?'▶':'▼';
-        h+=`<div class="port-section-divider group-header" data-group="${escHtml(p.groupName)}">
+        const gidx=p._gidx!=null?p._gidx:'';
+        h+=`<div class="port-section-divider group-header" data-group="${escHtml(p.groupName)}" data-gidx="${gidx}">
           <span class="collapse-icon ${collapsed?'collapsed':''}" style="color:${collapsed?'#555':'var(--success)'}">${icon}</span>
           ${getProtoIcon(g)[0]} ${escHtml(p.groupName)} ${tag}
           <span style="margin-left:auto;font-size:12px;color:var(--danger);cursor:pointer;padding:2px 8px" title="Clear all connections in this group" onclick="event.stopPropagation();selectInstance('${inst.id}');clearGroupConns('${escHtml(p.groupName)}')">⛓️‍💥</span></div>`;
@@ -4957,15 +5001,10 @@ function renderPortSections(inst,dp,conn){
     }
     let collapsedClass='';
     if(sec==='clk'&&inst._clkCollapsed)collapsedClass='collapsed';
-    else if(sec==='clk_grp'&&p.groupName){
-      const g=inst.clockGroups?.find(x=>x.name===p.groupName);
-      if(g?._collapsed)collapsedClass='collapsed';
-    }else if(sec==='rst'&&inst._rstCollapsed)collapsedClass='collapsed';
-    else if(sec==='rst_grp'&&p.groupName){
-      const g=inst.resetGroups?.find(x=>x.name===p.groupName);
-      if(g?._collapsed)collapsedClass='collapsed';
-    }else if(sec==='group'&&p.groupName){
-      const g=inst.portGroups.find(x=>x.name===p.groupName);
+    else if(sec==='clk_grp'){if(inst._clkCollapsed)collapsedClass='collapsed';else{const g=inst.clockGroups?.find(x=>x.name===p.groupName);if(g?._collapsed)collapsedClass='collapsed';}}
+    else if(sec==='rst'&&inst._rstCollapsed)collapsedClass='collapsed';
+    else if(sec==='rst_grp'){if(inst._rstCollapsed)collapsedClass='collapsed';else{const g=inst.resetGroups?.find(x=>x.name===p.groupName);if(g?._collapsed)collapsedClass='collapsed';}}else if(sec==='group'&&p.groupName){
+      const g=p._gidx!=null?inst.portGroups[p._gidx]:inst.portGroups.find(x=>x.name===p.groupName);
       if(g?._collapsed)collapsedClass='collapsed';
     }
     let dirClass=p.direction;
@@ -4994,31 +5033,34 @@ function bindInstanceEvents(div,inst){
   });
   div.querySelectorAll('.group-header').forEach(hdr=>{
     hdr.addEventListener('mousedown',e=>{
-      const gn=hdr.dataset.group;
+      let gn=hdr.dataset.group;
+      if(!gn&&hdr.dataset.gidx!==undefined){gn=inst.portGroups[hdr.dataset.gidx]?.name;}
       if(!gn)return; // clk/rst section headers: no bus drag
       e.stopPropagation();e.preventDefault();
-      const g=inst.portGroups.find(x=>x.name===gn);
+      const gidx=hdr.dataset.gidx;
+      const g=gidx!==undefined?inst.portGroups[gidx]:inst.portGroups.find(x=>x.name===gn);
       if(g&&g._collapsed&&g.portNames.length>0){g._collapsed=false;renderAllInstances();}
       startBusDrag(inst.id,gn,e);
     });
     hdr.addEventListener('click',e=>{
       const gn=hdr.dataset.group;
+      const gidx=hdr.dataset.gidx;
       const cgn=hdr.dataset.clkGroup;
       const rgn=hdr.dataset.rstGroup;
       const sec=hdr.dataset.section;
       if(sec){ // clk/rst section: toggle collapse
-        if(sec==='clk'){inst._clkCollapsed=!inst._clkCollapsed;renderAllInstances();updateProps();}
-        else if(sec==='rst'){inst._rstCollapsed=!inst._rstCollapsed;renderAllInstances();updateProps();}
+        if(sec==='clk'){inst._clkCollapsed=!inst._clkCollapsed;if(inst.clockGroups)for(const g of inst.clockGroups)g._collapsed=inst._clkCollapsed;renderAllInstances();updateProps();}
+        else if(sec==='rst'){inst._rstCollapsed=!inst._rstCollapsed;if(inst.resetGroups)for(const g of inst.resetGroups)g._collapsed=inst._rstCollapsed;renderAllInstances();updateProps();}
         return;
       }
       if(cgn){ // clock sub-group: toggle collapse
         const g=inst.clockGroups?.find(x=>x.name===cgn);
-        if(g){g._collapsed=!g._collapsed;renderAllInstances();updateProps();}
+        if(g){if(inst._clkCollapsed)inst._clkCollapsed=false;g._collapsed=!g._collapsed;renderAllInstances();updateProps();}
         return;
       }
       if(rgn){ // reset sub-group: toggle collapse
         const g=inst.resetGroups?.find(x=>x.name===rgn);
-        if(g){g._collapsed=!g._collapsed;renderAllInstances();updateProps();}
+        if(g){if(inst._rstCollapsed)inst._rstCollapsed=false;g._collapsed=!g._collapsed;renderAllInstances();updateProps();}
         return;
       }
       if(e.shiftKey){
@@ -5027,7 +5069,7 @@ function bindInstanceEvents(div,inst){
           window._pendingBus=null;renderAllInstances();renderAllConnectionsRaf();updateProps();
         }else{window._pendingBus={instId:inst.id,groupName:gn};toast('Bus: Shift+click another group header','info',3000);}
       }else{
-        const g=inst.portGroups.find(x=>x.name===gn);
+        const g=gidx!==undefined?inst.portGroups[gidx]:inst.portGroups.find(x=>x.name===gn);
         if(g){
           // Don't allow collapsing if this group has active waypoints
           const hasWP=document.querySelectorAll('.waypoint-dot').length>0&&
@@ -5930,8 +5972,9 @@ function updateProps(){
   const seen=new Set();
   for(const grp of inst.portGroups){
     if(grp.portNames.length<2&&!grp._userCreated)continue;
+    const idx=inst.portGroups.indexOf(grp);
     const dispNames=[];for(const n of grp.portNames){if(!seen.has(n)){seen.add(n);dispNames.push(n);}}
-    displayedByGroup[grp.name]=new Set(dispNames);
+    displayedByGroup[idx]=new Set(dispNames);
     for(const n of dispNames)portOwner[n]=grp.name;
   }
   let lastVisible=null;
@@ -5940,9 +5983,10 @@ function updateProps(){
     if(g._open===undefined)g._open=true;
     const visible=!g._collapsed;
     const isProto=!!g.protocol;
-    const shown=(displayedByGroup[g.name]||new Set()).size;
+    const grpIdx=inst.portGroups.indexOf(g);
+    const shown=(displayedByGroup[grpIdx]||new Set()).size;
     if(shown===0&&!g._userCreated)continue;
-    const ownPorts=displayedByGroup[g.name]||new Set();
+    const ownPorts=displayedByGroup[grpIdx]||new Set();
     h+=`<div class="group-card ${g._open!==false?'open':''}">
       <div class="group-header" onclick="togglePanelGroup('${escHtml(g.name)}')">
         <span style="display:inline-block;font-size:9px;cursor:grab;color:#888;margin-right:2px;padding:0 2px;user-select:none" onmousedown="event.stopPropagation();startGroupReorder(event,'${escHtml(g.name)}')" title="Drag to reorder">⋮⋮</span>
