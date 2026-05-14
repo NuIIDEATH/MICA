@@ -50,7 +50,7 @@ A lightweight, browser-based Verilog/SystemVerilog integration platform. Drag-an
 
 ## 🚀 Quick Start
 
-1. **Open `index.html`** in any modern browser (Chrome, Firefox, Edge, Safari).
+1. **Open `MICA.html`** in any modern browser (Chrome, Firefox, Edge, Safari).
 2. **Click `+ RTL Files`** to load your Verilog/SystemVerilog source files.
 3. **Drag modules** from the sidebar onto the canvas.
 4. **Auto-group & auto-connect** or manually wire ports.
