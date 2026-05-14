@@ -3052,7 +3052,7 @@ class PortGrouper{
               const chLabel=gk==='awwb'?'WR':gk==='arr'?'RD':gk==='accrcd'?'SNP':gk.toUpperCase();
               // Build clean name: bestTok + channelLabel + protocol
               const cleanName=(bestTok?bestTok.toUpperCase()+'_':'')+chLabel+'_'+name;
-              result.groups.push({name:cleanName,role:chRole,protocol:bestVer,portNames:chPorts});
+              result.groups.push({name:cleanName+(result.groups.filter(g=>g.name===cleanName).length>0?'_'+(result.groups.filter(g=>g.name===cleanName).length+1):''),role:chRole,protocol:bestVer,portNames:chPorts});
             }
             continue;
           }
@@ -3090,15 +3090,15 @@ class PortGrouper{
               subGroups[bestG].push(pn);
             }
             for(const sg of subGroups){
-              if(sg.length>=2){
-                const sRole=this._inferRole(sg,nports,bestProto);
-                result.groups.push({name:gname,role:sRole,protocol:bestVer,portNames:sg});
-              }
+                if(sg.length>=2){
+                  const sRole=this._inferRole(sg,nports,bestProto);
+                  result.groups.push({name:gname+(result.groups.filter(g=>g.name===gname).length>0?'_'+(result.groups.filter(g=>g.name===gname).length+1):''),role:sRole,protocol:bestVer,portNames:sg});
+                }
             }
             continue;
           }
         }
-        result.groups.push({name:gname,role:bestRole,protocol:bestVer,portNames});
+        result.groups.push({name:gname+(result.groups.filter(g=>g.name===gname).length>0?'_'+(result.groups.filter(g=>g.name===gname).length+1):''),role:bestRole,protocol:bestVer,portNames});
       }
     }
 
