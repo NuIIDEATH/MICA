@@ -2670,7 +2670,7 @@ function _tokenize(name){
   const raw=name.toLowerCase().split('_').filter(Boolean);
   const out=[];
   // Known channel prefixes from protocol definitions (single-letter or two-letter)
-  const chPfx=new Set(['aw','ar','w','b','r','p','h','t','at','cd','cr','ac']);
+  const chPfx=new Set(['aw','ar','w','b','r','h','t','at','cd','cr','ac']);
   // Known signal suffixes that can merge with channel prefixes
   const sigSfx=new Set(['valid','ready','addr','address','data','strb','strobe','last','resp','response',
     'prot','protection','cache','lock','burst','size','len','qos','region','id','user','trace','loop','wakeup',
@@ -2819,7 +2819,7 @@ class PortGrouper{
         'mii','rmii','gmii','xgmii','rgmii','can','flexray','lin',
         'smbus','i3c','qspi','sram','gpio','interrupt','ocp','wsp',
         'axis','stream','eth','tlm','pcie']);
-      const chTokens=new Set(['aw','ar','w','b','r','p','h','t','at','cd','cr','ac','la','lr','lc','lt','lm']);
+      const chTokens=new Set(['aw','ar','w','b','r','h','t','at','cd','cr','ac','la','lr','lc','lt','lm']);
       // Known signal tokens that should not be classified as instance at position 0
       const sigLike=new Set(['addr','address','data','we','wr','rd','en','enable','clk','clock','rst','reset',
         'valid','ready','ack','req','last','strobe','be','id','size','len','prot','cache','lock',
@@ -2937,10 +2937,10 @@ class PortGrouper{
       for(const nm of subNames){
         const np=nports.find(x=>x.p.name===nm);
         if(!np)continue;
-        // Build prefix by taking all tokens before the last signal-like token
+        // Build prefix: everything before the last signal/channel token
         const toks=np.toks;
         let lastSig=-1;
-        for(let i=toks.length-1;i>=0;i--)if(toks[i].type==='signal'||toks[i].type==='channel'){lastSig=i;}
+        for(let i=toks.length-1;i>=0;i--)if(toks[i].type==='signal'){lastSig=i;break;}
         const pfx=toks.slice(0,lastSig>0?lastSig:0).map(t=>t.tok).join('_');
         if(!prefixMap[pfx])prefixMap[pfx]=new Set();
         prefixMap[pfx].add(nm);
