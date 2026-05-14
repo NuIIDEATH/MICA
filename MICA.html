@@ -3372,31 +3372,36 @@ class PortGrouper{
         }
         const pns=cports.map(cp=>cp.p.name);
         for(const pn of pns)assignSet.add(pn);
-        // Split oversized groups (>14 ports) into ~7-port sub-groups
+        // Split oversized groups (>14 ports): try multiple thresholds
         if(pns.length>14){
-          const indices=clArr; // indices into rest[]
-          // Greedy agglomerative with size cap
-          let subs=indices.map(i=>new Set([i]));
-          while(subs.length>1){
-            let bestI=0,bestJ=1,bestSim=-1;
-            for(let a=0;a<subs.length;a++){
-              for(let b=a+1;b<subs.length;b++){
-                let minSim=1;
-                for(const ia of subs[a])for(const ib of subs[b]){if(sim[ia][ib]<minSim)minSim=sim[ia][ib];}
-                if(minSim>bestSim){bestSim=minSim;bestI=a;bestJ=b;}
+          const indices=clArr;
+          let bestSplit=null;
+          for(const thr of [0.35,0.25,0.15]){
+            let subs=indices.map(i=>new Set([i]));
+            while(subs.length>1){
+              let bestI=0,bestJ=1,bestSim=-1;
+              for(let a=0;a<subs.length;a++){
+                for(let b=a+1;b<subs.length;b++){
+                  let minSim=1;
+                  for(const ia of subs[a])for(const ib of subs[b]){if(sim[ia][ib]<minSim)minSim=sim[ia][ib];}
+                  if(minSim>bestSim){bestSim=minSim;bestI=a;bestJ=b;}
+                }
               }
+              if(bestSim<thr)break;
+              for(const ib of subs[bestJ])subs[bestI].add(ib);
+              subs.splice(bestJ,1);
             }
-            const merged=subs[bestI].size+subs[bestJ].size;
-            if(merged>10||bestSim<0.35)break;
-            for(const ib of subs[bestJ])subs[bestI].add(ib);
-            subs.splice(bestJ,1);
+            const valid=subs.filter(s=>s.size>=2);
+            if(valid.length>=2){bestSplit=valid;break;}
           }
-          for(const sub of subs){
-            if(sub.size<2)continue;
-            const spns=[...sub].map(i=>rest[i].p.name);
-            result.groups.push({name:cpref.replace(/_$/,'').toUpperCase()+tier.tag+'_SUB',role:null,protocol:null,portNames:spns});
+          if(bestSplit){
+            for(const sub of bestSplit){
+              const spns=[...sub].map(i=>rest[i].p.name);
+              result.groups.push({name:cpref.replace(/_$/,'').toUpperCase()+tier.tag+'_SUB',role:null,protocol:null,portNames:spns});
+            }
+          }else{
+            result.groups.push({name:cpref.replace(/_$/,'').toUpperCase()+tier.tag,role:null,protocol:null,portNames:pns});
           }
-          // Don't push the original group (replaced by sub-groups)
         }else{
           result.groups.push({name:cpref.replace(/_$/,'').toUpperCase()+tier.tag,role:null,protocol:null,portNames:pns});
         }
