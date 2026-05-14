@@ -2939,9 +2939,8 @@ class PortGrouper{
         if(!np)continue;
         // Build prefix by taking all tokens before the last signal-like token
         const toks=np.toks;
-        let lastSig=-1;
-        for(let i=toks.length-1;i>=0;i--)if(toks[i].type==='signal'||toks[i].type==='channel'){lastSig=i;}
-        const pfx=toks.slice(0,lastSig>0?lastSig:0).map(t=>t.tok).join('_');
+        // Build prefix: take all tokens EXCEPT signal tokens (captures instance discriminators before AND after signal)
+        const pfx=toks.filter(t=>t.type!=='signal').map(t=>t.tok).join('_');
         if(!prefixMap[pfx])prefixMap[pfx]=new Set();
         prefixMap[pfx].add(nm);
       }
@@ -2971,6 +2970,13 @@ class PortGrouper{
       const allSgl=noRealInst||Object.values(insts).every(v=>v.length<=1);
       if(allSgl&&subNames.length>=2) insts[0]=subNames;
       } // end else
+      const _assignSet=new Set();
+      const _pushGroup=(portNames,grp)=>{
+        const dedup=portNames.filter(n=>!_assignSet.has(n));
+        if(dedup.length<2)return;
+        for(const n of dedup)_assignSet.add(n);
+        result.groups.push({name:grp.name,role:grp.role,protocol:grp.protocol,portNames:dedup});
+      };
       for(const[com,portNames]of Object.entries(insts)){
         if(portNames.length<2)continue;
         // Phase 3: Version annotation
@@ -3052,7 +3058,7 @@ class PortGrouper{
               const chLabel=gk==='awwb'?'WR':gk==='arr'?'RD':gk==='accrcd'?'SNP':gk.toUpperCase();
               // Build clean name: bestTok + channelLabel + protocol
               const cleanName=(bestTok?bestTok.toUpperCase()+'_':'')+chLabel+'_'+name;
-              result.groups.push({name:cleanName,role:chRole,protocol:bestVer,portNames:chPorts});
+               _pushGroup(chPorts,{name:cleanName,role:chRole,protocol:bestVer});
             }
             continue;
           }
@@ -3092,13 +3098,13 @@ class PortGrouper{
             for(const sg of subGroups){
               if(sg.length>=2){
                 const sRole=this._inferRole(sg,nports,bestProto);
-                result.groups.push({name:gname,role:sRole,protocol:bestVer,portNames:sg});
+                _pushGroup(sg,{name:gname,role:sRole,protocol:bestVer});
               }
             }
             continue;
           }
         }
-        result.groups.push({name:gname,role:bestRole,protocol:bestVer,portNames});
+        _pushGroup(portNames,{name:gname,role:bestRole,protocol:bestVer});
       }
     }
 
@@ -3325,7 +3331,7 @@ class PortGrouper{
       if(bestSim<confTightThresh)break;
       // Size bonus: peak at 7 ports, gently penalize too-large or too-small
       const mergedSize=grps[bestI].size+grps[bestJ].size;
-      const sizeFactor=Math.max(0.5, 1-Math.abs(mergedSize-7)*0.015);
+      const sizeFactor=Math.max(0.3, 1-Math.abs(mergedSize-8)*0.04);
       if(bestSim*sizeFactor<confTightThresh)break;
       for(const pj of grps[bestJ])grps[bestI].add(pj);
       grps.splice(bestJ,1);
@@ -3345,7 +3351,7 @@ class PortGrouper{
         }
         if(bestSim<confLooseThresh)break;
         const lsMerged=loose[bestI].size+loose[bestJ].size;
-        const lsFactor=1-Math.abs(lsMerged-7)*0.015;
+        const lsFactor=Math.max(0.3, 1-Math.abs(lsMerged-8)*0.04);
         if(bestSim*lsFactor<confLooseThresh)break;
         for(const pj of loose[bestJ])loose[bestI].add(pj);
         loose.splice(bestJ,1);
