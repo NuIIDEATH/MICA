@@ -3325,7 +3325,7 @@ class PortGrouper{
       if(bestSim<confTightThresh)break;
       // Size bonus: peak at 7 ports, gently penalize too-large or too-small
       const mergedSize=grps[bestI].size+grps[bestJ].size;
-      const sizeFactor=Math.max(0.5, 1-Math.abs(mergedSize-7)*0.015);
+      const sizeFactor=Math.max(0.3, 1-Math.abs(mergedSize-7)*0.05);
       if(bestSim*sizeFactor<confTightThresh)break;
       for(const pj of grps[bestJ])grps[bestI].add(pj);
       grps.splice(bestJ,1);
@@ -3345,7 +3345,7 @@ class PortGrouper{
         }
         if(bestSim<confLooseThresh)break;
         const lsMerged=loose[bestI].size+loose[bestJ].size;
-        const lsFactor=1-Math.abs(lsMerged-7)*0.015;
+        const lsFactor=Math.max(0.3, 1-Math.abs(lsMerged-7)*0.05);
         if(bestSim*lsFactor<confLooseThresh)break;
         for(const pj of loose[bestJ])loose[bestI].add(pj);
         loose.splice(bestJ,1);
